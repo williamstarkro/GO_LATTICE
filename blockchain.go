@@ -1,21 +1,60 @@
 package main
 
+import (
+	"log"
+
+	"github.com/boltdb/bolt"
+)
+
 type Blockchain struct {
 	Owner  []byte
-	Blocks []*Block
+	Tip    []byte
 }
 
-func (bc *Blockchain) AddBlock(data string, sender string) {
+func (bc *Blockchain) AddBlock(data, sender string, db *bolt.DB) {
+	var lastHash []byte
 
-	prevBlock := bc.Blocks[len(bc.Blocks)-1]
-	newBlock := NewBlock(data, prevBlock.Hash, sender)
-	bc.Blocks = append(bc.Blocks, newBlock)
+	err := db.View(func(tx *bolt.Tx) error {
+		a := tx.Bucket([]byte(accountsBucket))
+		lastHash = a.Get([]byte(bc.Owner))
+
+		return nil
+	})
+	if err != nil {
+		log.Panic(err)
+	}
+
+	newBlock := NewBlock(data, lastHash, sender)
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(blocksBucket))
+		a := tx.Bucket([]byte(accountsBucket))
+		err := b.Put(newBlock.Hash, newBlock.Serialize())
+		if err != nil {
+			log.Panic(err)
+		}
+
+		err = a.Put(bc.Owner, newBlock.Hash)
+		if err != nil {
+			log.Panic(err)
+		}
+
+		bc.Tip = newBlock.Hash
+
+		return nil
+	})
+	if err != nil {
+		log.Panic(err)
+	}
 }
 
-func NewBlockchain(owner string) *Blockchain {
-	return &Blockchain{[]byte(owner), []*Block{NewGenesisBlock()}}
+func (bc *Blockchain) Iterator(db *bolt.DB) *BlockchainIterator {
+	bci := &BlockchainIterator{bc.Tip, db}
+
+	return bci
 }
 
-func GenesisChain() *Blockchain {
-	return &Blockchain{[]byte("Genesis Chain"), []*Block{NewGenesisBlock()}}
+func NewBlockchain(owner string) (*Blockchain, *Block) {
+	genesis := NewGenesisBlock()
+	return &Blockchain{[]byte(owner), genesis.Hash}, genesis
 }
